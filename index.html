@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Fart Flap 💨</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link href="https://fonts.googleapis.com/css2?family=Chewy&display=swap" rel="stylesheet">
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; background: #000; }
+        canvas { width: 100%; height: 100%; object-fit: contain; }
+        canvas { letter-spacing: 2px; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Load Assets
+        const backgroundImg = new Image(); backgroundImg.src = 'https://i.imgur.com/mcHfxVB.png';
+        const playerIdleImg = new Image(); playerIdleImg.src = 'https://i.imgur.com/3hMdsAf.png';
+        const playerJumpImg = new Image(); playerJumpImg.src = 'https://i.imgur.com/6RrFQXQ.png';
+        const fartPuffImg = new Image(); fartPuffImg.src = 'https://i.imgur.com/UCtUASF.png';
+        const magicalPillarImg = new Image(); magicalPillarImg.src = 'https://i.imgur.com/GsXiu3u.png';
+        const goldenTPImg = new Image(); goldenTPImg.src = 'https://i.imgur.com/2b4QO53.png';
+        const spicyBeanImg = new Image(); spicyBeanImg.src = 'https://i.imgur.com/9SIUUIV.png';
+        const gameOverImg = new Image(); gameOverImg.src = 'https://i.imgur.com/BmgQeC7.png';
+        const fartSound = new Audio('https://raw.githubusercontent.com/FartTeamCTO/Assets/main/Fart%20-%20Jump.mp3');
+        const powerUpSound = new Audio('https://raw.githubusercontent.com/FartTeamCTO/Assets/main/Whoosh%20-%20Power%20Up.mp3');
+        const gameOverSound = new Audio('https://raw.githubusercontent.com/FartTeamCTO/Assets/main/Deflating%20Baloon%20-%20GO.mp3');
+        const coinSound = new Audio('https://raw.githubusercontent.com/FartTeamCTO/Assets/main/Coin.mp3');
+        const dingSound = new Audio('https://raw.githubusercontent.com/FartTeamCTO/Assets/main/Ding.mp3');
+
+        // Game Variables
+        const DESIGN_WIDTH = 1280;
+        const DESIGN_HEIGHT = 720;
+        let scale = 1;
+        let player = { x: 200, y: 360, vy: 0, radius: 45, jumping: false, puffTimer: 0 };
+        let gravity = 0.5;
+        let fartBoost = -12;
+        let obstacles = [];
+        let powerUps = [];
+        let score = 0;
+        let lastScore = 0;
+        let clickCount = 0;
+        let totalFarts = parseInt(localStorage.getItem('totalFarts')) || 0;
+        let personalScores = JSON.parse(localStorage.getItem('personalScores')) || [];
+        let gameOver = false;
+        let gameStarted = false;
+        let invincible = false;
+        let rapidFire = false;
+        let rapidFireTimer = 0;
+        let rapidFireTimeout = null; // Added for spicy bean fix
+        let invincibleTimer = 0;
+        let lastPowerUpTime = 0;
+        let lastPowerUpType = '';
+        let hasPlayedGameOverSound = false;
+        let lastGoldenTPSpawn = -10000;
+        let lastBeanSpawn = 0;
+        let obstacleCount = 0;
+        let lastTime = 0;
+        let isPressing = false;
+        let pressTimer = 0;
+        let lastFartSound = 0;
+        let lastGapY = 0;
+        let scrollSpeed = 3.9;
+        let showHitboxes = false;
+        let lastSpawnDistance = 600;
+        let lastMilestoneScore = 0;
+
+        // Corner Tap Zone for Toggle (Top-Right)
+        const toggleZone = {
+            x: DESIGN_WIDTH - 100,
+            y: 0,
+            width: 100,
+            height: 100
+        };
+
+        // Resize Canvas
+        function resizeCanvas() {
+            const aspect = DESIGN_WIDTH / DESIGN_HEIGHT;
+            let w = window.innerWidth;
+            let h = window.innerHeight;
+            if (w / h > aspect) {
+                canvas.width = h * aspect;
+                canvas.height = h;
+            } else {
+                canvas.width = w;
+                canvas.height = w / aspect;
+            }
+            scale = canvas.width / DESIGN_WIDTH;
+            ctx.scale(scale, scale);
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Start Game
+        function startGame() {
+            obstacles = [];
+            powerUps = [];
+            score = 0;
+            lastMilestoneScore = 0;
+            clickCount = 0;
+            obstacleCount = 0;
+            gameOver = false;
+            gameStarted = false;
+            invincible = false;
+            rapidFire = false;
+            rapidFireTimer = 0;
+            if (rapidFireTimeout) clearTimeout(rapidFireTimeout); // Clear any lingering timeout
+            rapidFireTimeout = null;
+            invincibleTimer = 0;
+            lastPowerUpTime = 0;
+            lastPowerUpType = '';
+            hasPlayedGameOverSound = false;
+            lastGoldenTPSpawn = -10000;
+            lastBeanSpawn = 0;
+            lastGapY = 0;
+            scrollSpeed = 3.9;
+            lastSpawnDistance = 600;
+            player = { x: 200, y: 360, vy: 0, radius: 45, jumping: false, puffTimer: 0 };
+            spawnObstacle();
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Player Movement
+        function fart() {
+            if (!gameStarted) {
+                gameStarted = true;
+                if (!document.fullscreenElement) {
+                    canvas.requestFullscreen().catch(err => console.log(err));
+                }
+            }
+            player.vy = rapidFire ? -8 : fartBoost;
+            player.jumping = true;
+            player.puffTimer = 15;
+            fartSound.pause();
+            fartSound.currentTime = 0;
+            fartSound.play();
+            clickCount++;
+            totalFarts++;
+            localStorage.setItem('totalFarts', totalFarts);
+            lastFartSound = performance.now();
+            setTimeout(() => { if (!isPressing) player.jumping = false; }, rapidFire ? 100 : 200);
+        }
+
+        // Obstacle Spawning
+        function spawnObstacle() {
+            let gap = 310;
+            if (score >= 200) gap = 285;
+            else if (score >= 175) gap = 290;
+            else if (score >= 150) gap = 295;
+            else if (score >= 125) gap = 300;
+            else if (score >= 100) gap = 305;
+
+            const width = 160;
+            const height = 300;
+            const hitboxHeight = height * 0.8 * 1.2;
+            let minY = score < 25 ? -150 : -200;
+            let maxY = score < 25 ? 50 : 100;
+
+            let spawnDistance;
+            if (score < 50) {
+                spawnDistance = 600;
+            } else if (score < 75) {
+                spawnDistance = 450 + Math.random() * 200;
+            } else {
+                spawnDistance = lastSpawnDistance < 500 ? 500 + Math.random() * 200 : 300 + Math.random() * 200;
+            }
+            lastSpawnDistance = spawnDistance;
+
+            let yPos;
+            if (score >= 100 && spawnDistance < 350) {
+                yPos = Math.max(minY, Math.min(maxY, lastGapY - 30 + Math.random() * 60));
+            } else if (score >= 100 && spawnDistance < 400) {
+                yPos = Math.max(minY, Math.min(maxY, lastGapY - 50 + Math.random() * 100));
+            } else {
+                if (lastGapY < -100) {
+                    yPos = Math.random() * (maxY - (-100)) + (-100);
+                } else if (lastGapY > -100) {
+                    yPos = Math.random() * ((-100) - minY) + minY;
+                } else {
+                    yPos = Math.random() < 0.5 ? minY + Math.random() * 50 : maxY - Math.random() * 50;
+                }
+            }
+            lastGapY = yPos;
+
+            let isDouble = score >= 100 && Math.random() < 0.1;
+            let isTriple = score >= 100 && !isDouble && Math.random() < 0.05;
+
+            obstacles.push({
+                x: DESIGN_WIDTH,
+                y: yPos,
+                width: width,
+                height: height,
+                gap: gap,
+                hitboxWidth: width * 0.8,
+                hitboxHeight: hitboxHeight,
+                imgTopX: DESIGN_WIDTH - 18,
+                imgTopY: yPos - 3,
+                imgBottomX: DESIGN_WIDTH - 14,
+                imgBottomY: yPos + 583,
+                type: Math.floor(Math.random() * 3),
+                passed: false,
+                sounded: false,
+                nextSpawnDistance: spawnDistance
+            });
+            obstacleCount++;
+
+            if (isDouble || isTriple) {
+                let yPos2 = Math.max(minY, Math.min(maxY, yPos - 30 + Math.random() * 60));
+                obstacles.push({
+                    x: DESIGN_WIDTH + 210,
+                    y: yPos2,
+                    width: width,
+                    height: height,
+                    gap: gap,
+                    hitboxWidth: width * 0.8,
+                    hitboxHeight: hitboxHeight,
+                    imgTopX: DESIGN_WIDTH + 210 - 18,
+                    imgTopY: yPos2 - 3,
+                    imgBottomX: DESIGN_WIDTH + 210 - 14,
+                    imgBottomY: yPos2 + 583,
+                    type: Math.floor(Math.random() * 3),
+                    passed: false,
+                    sounded: false,
+                    nextSpawnDistance: spawnDistance
+                });
+                obstacleCount++;
+            }
+
+            if (isTriple) {
+                let yPos3 = Math.max(minY, Math.min(maxY, obstacles[obstacles.length - 1].y - 30 + Math.random() * 60));
+                obstacles.push({
+                    x: DESIGN_WIDTH + 420,
+                    y: yPos3,
+                    width: width,
+                    height: height,
+                    gap: gap,
+                    hitboxWidth: width * 0.8,
+                    hitboxHeight: hitboxHeight,
+                    imgTopX: DESIGN_WIDTH + 420 - 18,
+                    imgTopY: yPos3 - 3,
+                    imgBottomX: DESIGN_WIDTH + 420 - 14,
+                    imgBottomY: yPos3 + 583,
+                    type: Math.floor(Math.random() * 3),
+                    passed: false,
+                    sounded: false,
+                    nextSpawnDistance: spawnDistance
+                });
+                obstacleCount++;
+            }
+        }
+
+        // Spicy Bean Spawning
+        function spawnSpicyBean() {
+            const now = performance.now();
+            const spawnInterval = score < 50 ? 3 : 5;
+            const cooldown = score < 50 ? (3000 + Math.random() * 3000) : (4000 + Math.random() * 4000);
+            if (now - lastBeanSpawn < cooldown || obstacleCount % spawnInterval !== 0) return;
+
+            let puX = Math.max(DESIGN_WIDTH + 300, DESIGN_WIDTH + 300 + Math.random() * 1500);
+            let puY;
+            do {
+                puY = Math.random() < 0.2 ? (lastGapY + 50 + Math.random() * 150) : (50 + Math.random() * 620);
+                puY = Math.max(50, Math.min(670, puY));
+                let overlap = false;
+                for (let obs of obstacles) {
+                    let left = obs.x;
+                    let right = obs.x + obs.hitboxWidth;
+                    let topEdge = obs.y - 5 + obs.hitboxHeight;
+                    let bottomEdge = obs.y + obs.gap + obs.hitboxHeight;
+                    if (puX + 40 > left && puX - 40 < right &&
+                        ((puY - 40 < topEdge) || (puY + 40 > bottomEdge))) {
+                        overlap = true;
+                        break;
+                    }
+                }
+                if (!overlap) break;
+                puX += 300;
+            } while (true);
+
+            powerUps.push({
+                x: puX,
+                y: puY,
+                radius: 40,
+                type: 'spicyBean'
+            });
+            lastBeanSpawn = now;
+        }
+
+        // Golden TP Spawning
+        function spawnGoldenTP() {
+            const now = performance.now();
+            if (score < 25 || now - lastGoldenTPSpawn < 10000 + Math.random() * 5000 || Math.random() > 0.2) return;
+
+            let puX = Math.max(DESIGN_WIDTH + 300, DESIGN_WIDTH + 300 + Math.random() * 1500);
+            let puY;
+            do {
+                puY = Math.random() < 0.2 ? (lastGapY + 50 + Math.random() * 150) : (50 + Math.random() * 620);
+                puY = Math.max(50, Math.min(670, puY));
+                let overlap = false;
+                for (let obs of obstacles) {
+                    let left = obs.x;
+                    let right = obs.x + obs.hitboxWidth;
+                    let topEdge = obs.y - 5 + obs.hitboxHeight;
+                    let bottomEdge = obs.y + obs.gap + obs.hitboxHeight;
+                    if (puX + 40 > left && puX - 40 < right &&
+                        ((puY - 40 < topEdge) || (puY + 40 > bottomEdge))) {
+                        overlap = true;
+                        break;
+                    }
+                }
+                if (!overlap) break;
+                puX += 300;
+            } while (true);
+
+            powerUps.push({
+                x: puX,
+                y: puY,
+                radius: 40,
+                type: 'goldenTP'
+            });
+            lastGoldenTPSpawn = now;
+        }
+
+        // Update Personal Scores
+        function updatePersonalScores() {
+            personalScores.push(score);
+            personalScores.sort((a, b) => b - a);
+            personalScores = personalScores.slice(0, 5);
+            localStorage.setItem('personalScores', JSON.stringify(personalScores));
+        }
+
+        // Game Loop
+        function gameLoop(currentTime) {
+            const deltaTime = (currentTime - lastTime) / 1000;
+            lastTime = currentTime;
+
+            ctx.clearRect(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT);
+            ctx.drawImage(backgroundImg, 0, 0, DESIGN_WIDTH, DESIGN_HEIGHT);
+
+            if (!gameStarted) {
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 4;
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 40px Chewy';
+                ctx.textAlign = 'center';
+                ctx.strokeText('Tap to Start', 640, 360);
+                ctx.fillText('Tap to Start', 640, 360);
+                ctx.textAlign = 'left';
+                ctx.drawImage(playerIdleImg, player.x - 61, player.y - 61, 128, 128);
+            } else if (gameOver) {
+                ctx.drawImage(gameOverImg, 0, 0, DESIGN_WIDTH, DESIGN_HEIGHT);
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 4;
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 30px Chewy';
+                ctx.textAlign = 'center';
+                ctx.strokeText(`Score: ${score}`, 306, 465);
+                ctx.fillText(`Score: ${score}`, 306, 465);
+                ctx.strokeText(`Last Score: ${lastScore}`, 306, 505);
+                ctx.fillText(`Last Score: ${lastScore}`, 306, 505);
+                ctx.strokeText(`Farts: ${clickCount}`, 306, 585);
+                ctx.fillText(`Farts: ${clickCount}`, 306, 585);
+                ctx.strokeText(`Total Farts: ${totalFarts}`, 306, 625);
+                ctx.fillText(`Total Farts: ${totalFarts}`, 306, 625);
+                ctx.strokeText('Tap to Retry', 640, 430);
+                ctx.fillText('Tap to Retry', 640, 430);
+                ctx.strokeText('Top 5 Scores:', 974, 465);
+                ctx.fillText('Top 5 Scores:', 974, 465);
+                ctx.textAlign = 'left';
+                for (let i = 0; i < personalScores.length; i++) {
+                    ctx.strokeText(`${i + 1}. ${personalScores[i]}`, 924, 505 + i * 40);
+                    ctx.fillText(`${i + 1}. ${personalScores[i]}`, 924, 505 + i * 40);
+                }
+                if (!hasPlayedGameOverSound) {
+                    gameOverSound.play();
+                    hasPlayedGameOverSound = true;
+                    navigator.vibrate([800, 200, 400]);
+                }
+            } else {
+                scrollSpeed = 3.9 + (3.9 * (0.05 * (score >= 150 ? 1 : 0) + 0.10 * Math.floor(Math.max(0, score - 150) / 100)));
+
+                if (powerUps.length < 2 || powerUps[powerUps.length - 1].x < DESIGN_WIDTH - 1200) {
+                    spawnSpicyBean();
+                    spawnGoldenTP();
+                }
+
+                player.vy += gravity * deltaTime * 63;
+                if (isPressing) {
+                    pressTimer += deltaTime * 63;
+                    if (pressTimer > 10) {
+                        player.vy = -6;
+                        player.jumping = true;
+                        player.puffTimer = 15;
+                        if (currentTime - lastFartSound > 250) {
+                            fartSound.pause();
+                            fartSound.currentTime = 0;
+                            fartSound.play();
+                            clickCount++;
+                            totalFarts++;
+                            localStorage.setItem('totalFarts', totalFarts);
+                            lastFartSound = currentTime;
+                        }
+                    }
+                }
+                player.y += player.vy * deltaTime * 63;
+                if (player.y + player.radius > DESIGN_HEIGHT + 100) {
+                    lastScore = score;
+                    updatePersonalScores();
+                    gameOver = true;
+                    if (!hasPlayedGameOverSound) {
+                        gameOverSound.play();
+                        hasPlayedGameOverSound = true;
+                        navigator.vibrate([800, 200, 400]);
+                    }
+                }
+                if (player.y < -player.radius) player.y = -player.radius;
+
+                const playerImg = player.jumping ? playerJumpImg : playerIdleImg;
+                if (player.puffTimer > 0) {
+                    ctx.drawImage(fartPuffImg, player.x - 80, player.y, 80, 80);
+                    player.puffTimer -= deltaTime * 63;
+                }
+                ctx.drawImage(playerImg, player.x - 61, player.y - 61, 128, 128);
+
+                let currentSound = coinSound;
+
+                for (let i = obstacles.length - 1; i >= 0; i--) {
+                    let obs = obstacles[i];
+                    obs.x -= scrollSpeed * deltaTime * 63;
+                    obs.imgTopX = obs.x - 18;
+                    obs.imgBottomX = obs.x - 14;
+
+                    if (obs.imgTopY > -500) {
+                        ctx.save();
+                        ctx.translate(obs.imgTopX + obs.width / 2, obs.y - 3);
+                        ctx.rotate(Math.PI);
+                        ctx.drawImage(magicalPillarImg, -obs.width / 2, -obs.height, 160, 400);
+                        ctx.restore();
+                    }
+
+                    if (obs.imgBottomY < 1000) {
+                        ctx.save();
+                        ctx.drawImage(magicalPillarImg, obs.imgBottomX, obs.imgBottomY, 160, 400);
+                        ctx.restore();
+                    }
+
+                    if (!invincible && (
+                        (player.x + player.radius > obs.x &&
+                         player.x - player.radius < obs.x + obs.hitboxWidth &&
+                        (player.y - player.radius < obs.y - 5 + obs.hitboxHeight ||
+                         player.y + player.radius > obs.y + obs.hitboxHeight + obs.gap))
+                    )) {
+                        lastScore = score;
+                        updatePersonalScores();
+                        gameOver = true;
+                        if (!hasPlayedGameOverSound) {
+                            gameOverSound.play();
+                            hasPlayedGameOverSound = true;
+                            navigator.vibrate([800, 200, 400]);
+                        }
+                    }
+
+                    if (obs.type === 2 && Math.abs(player.x - obs.x) < 200) player.vy += 0.1 * deltaTime * 63;
+
+                    if (!obs.sounded && player.x > obs.x + 50 && player.x < obs.x + 78) {
+                        currentSound.pause();
+                        currentSound.currentTime = 0;
+                        currentSound.play();
+                        navigator.vibrate(50);
+                        obs.sounded = true;
+                    }
+
+                    if (!obs.passed && obs.x + obs.width < player.x) {
+                        score++;
+                        obs.passed = true;
+                    }
+
+                    if (obs.x < -obs.width) obstacles.splice(i, 1);
+                }
+
+                if (score >= lastMilestoneScore + 100) {
+                    navigator.vibrate([100, 100, 100, 100, 100]);
+                    lastMilestoneScore = Math.floor(score / 100) * 100;
+                }
+
+                for (let i = powerUps.length - 1; i >= 0; i--) {
+                    let pu = powerUps[i];
+                    pu.x -= scrollSpeed * deltaTime * 63;
+                    let puImg = pu.type === 'spicyBean' ? spicyBeanImg : goldenTPImg;
+                    ctx.drawImage(puImg, pu.x - 40, pu.y - 40, 80, 80);
+
+                    let overlap = false;
+                    for (let obs of obstacles) {
+                        let left = obs.x;
+                        let right = obs.x + obs.hitboxWidth;
+                        let topEdge = obs.y - 5 + obs.hitboxHeight;
+                        let bottomEdge = obs.y + obs.gap + obs.hitboxHeight;
+                        if (pu.x + 40 > left && pu.x - 40 < right &&
+                            ((pu.y - 40 < topEdge) || (pu.y + 40 > bottomEdge))) {
+                            overlap = true;
+                            break;
+                        }
+                    }
+                    if (overlap) {
+                        powerUps.splice(i, 1);
+                        if (pu.type === 'spicyBean') spawnSpicyBean();
+                        else spawnGoldenTP();
+                        continue;
+                    }
+
+                    if (Math.hypot(player.x - pu.x, player.y - pu.y) < (player.radius + pu.radius)) {
+                        powerUpSound.play();
+                        navigator.vibrate(300);
+                        if (pu.type === 'spicyBean') {
+                            // Clear any existing timeout to prevent it from cutting the effect short
+                            if (rapidFireTimeout) {
+                                clearTimeout(rapidFireTimeout);
+                            }
+                            // Reset the rapid fire effect and timer
+                            rapidFire = true;
+                            rapidFireTimer = 5000; // 5 seconds
+                            rapidFireTimeout = setTimeout(() => {
+                                rapidFire = false;
+                                rapidFireTimeout = null; // Clean up the timeout reference
+                            }, 5000);
+                            score += 5;
+                            lastBeanSpawn = currentTime;
+                            lastPowerUpTime = currentTime;
+                            lastPowerUpType = 'spicyBean';
+                        } else if (pu.type === 'goldenTP') {
+                            if (!invincible) { // Only set if not already active
+                                invincible = true;
+                                invincibleTimer = 4000;
+                                setTimeout(() => { invincible = false; }, 4000);
+                            }
+                            score += 7;
+                            lastGoldenTPSpawn = currentTime;
+                            lastPowerUpTime = currentTime;
+                            lastPowerUpType = 'goldenTP';
+                        }
+                        powerUps.splice(i, 1);
+                    }
+
+                    if (pu.x < -pu.radius) powerUps.splice(i, 1);
+                }
+
+                const lastObstacle = obstacles[obstacles.length - 1];
+                const spawnDistance = lastObstacle ? lastObstacle.nextSpawnDistance : 600;
+                if (obstacles.length === 0 || lastObstacle.x < DESIGN_WIDTH - spawnDistance) {
+                    spawnObstacle();
+                }
+
+                if (rapidFireTimer > 0) rapidFireTimer -= deltaTime * 1000;
+                if (invincibleTimer > 0) invincibleTimer -= deltaTime * 1000;
+                if (rapidFireTimer <= 0) rapidFire = false;
+                if (invincibleTimer <= 0) invincible = false;
+
+                if (rapidFireTimer > 0 || invincibleTimer > 0) {
+                    let activeTimer = lastPowerUpType === 'spicyBean' ? rapidFireTimer : invincibleTimer;
+                    let timerColor = lastPowerUpType === 'spicyBean' ? '#ff4500' : '#ffff00';
+                    let timerText = (activeTimer / 1000).toFixed(2) + 's';
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 2;
+                    ctx.fillStyle = timerColor;
+                    ctx.font = 'bold 20px Chewy';
+                    ctx.textAlign = 'center';
+                    ctx.strokeText(timerText, 640, 40);
+                    ctx.fillText(timerText, 640, 40);
+                }
+
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 4;
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 30px Chewy';
+                ctx.textAlign = 'left';
+                ctx.strokeText(`Score: ${score}`, 20, 40);
+                ctx.fillText(`Score: ${score}`, 20, 40);
+                ctx.strokeText(`Last: ${lastScore}`, 20, 70);
+                ctx.fillText(`Last: ${lastScore}`, 20, 70);
+                ctx.textAlign = 'right';
+                ctx.strokeText(`Farts: ${clickCount}`, DESIGN_WIDTH - 50, 40);
+                ctx.fillText(`Farts: ${clickCount}`, DESIGN_WIDTH - 50, 40);
+                ctx.textAlign = 'left';
+
+                if (gameStarted && !gameOver && showHitboxes) {
+                    ctx.beginPath();
+                    ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(0, 0, 255, 0.3)';
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(0, 0, 255, 0.75)';
+                    ctx.lineWidth = 2 / scale;
+                    ctx.stroke();
+                    ctx.closePath();
+
+                    for (let obs of obstacles) {
+                        let topHitboxHeight = (obs.y - 5 + obs.hitboxHeight) - 0;
+                        let bottomHitboxTop = obs.y + obs.gap + obs.hitboxHeight;
+                        let bottomHitboxHeight = 720 - bottomHitboxTop;
+
+                        ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+                        ctx.fillRect(obs.x, 0, obs.hitboxWidth, topHitboxHeight);
+                        ctx.strokeStyle = 'rgba(255, 0, 0, 0.75)';
+                        ctx.lineWidth = 2 / scale;
+                        ctx.strokeRect(obs.x, 0, obs.hitboxWidth, topHitboxHeight);
+
+                        ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+                        ctx.fillRect(obs.x, bottomHitboxTop, obs.hitboxWidth, bottomHitboxHeight);
+                        ctx.strokeStyle = 'rgba(255, 0, 0, 0.75)';
+                        ctx.lineWidth = 2 / scale;
+                        ctx.strokeRect(obs.x, bottomHitboxTop, obs.hitboxWidth, bottomHitboxHeight);
+                    }
+
+                    for (let pu of powerUps) {
+                        ctx.beginPath();
+                        ctx.arc(pu.x, pu.y, pu.radius, 0, Math.PI * 2);
+                        ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+                        ctx.fill();
+                        ctx.strokeStyle = 'rgba(0, 255, 0, 0.75)';
+                        ctx.lineWidth = 2 / scale;
+                        ctx.stroke();
+                        ctx.closePath();
+                    }
+                }
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Event Listeners
+        canvas.addEventListener('mousedown', () => {
+            if (gameOver) startGame();
+            else {
+                isPressing = true;
+                fart();
+            }
+        });
+        canvas.addEventListener('mouseup', () => {
+            isPressing = false;
+            pressTimer = 0;
+            player.jumping = false;
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const touchX = (touch.clientX - rect.left) / scale;
+            const touchY = (touch.clientY - rect.top) / scale;
+
+            if (touchX >= toggleZone.x && touchX <= toggleZone.x + toggleZone.width &&
+                touchY >= toggleZone.y && touchY <= toggleZone.y + toggleZone.height) {
+                showHitboxes = !showHitboxes;
+            } else {
+                if (gameOver) startGame();
+                else {
+                    isPressing = true;
+                    fart();
+                }
+            }
+        }, { passive: false });
+        canvas.addEventListener('touchend', () => {
+            isPressing = false;
+            pressTimer = 0;
+            player.jumping = false;
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === '9') {
+                showHitboxes = !showHitboxes;
+            }
+        });
+
+        // Start the Game
+        startGame();
+    </script>
+</body>
+</html>
